@@ -158,14 +158,19 @@ class ImageCacheTests: XCTestCase {
     func testIsImageCachedForKey() {
         let expectation = self.expectationWithDescription("wait for caching image")
         
-        let delayTime = dispatch_time(DISPATCH_TIME_NOW, Int64(0.5 * Double(NSEC_PER_SEC)))
-        dispatch_after(delayTime, dispatch_get_main_queue()) {
-            XCTAssert(self.cache.isImageCachedForKey(testKeys[0]).cached == false, "This image should not be cached yet.")
-            self.cache.storeImage(testImage, originalData: testImageData, forKey: testKeys[0], toDisk: true) { () -> () in
-                XCTAssert(self.cache.isImageCachedForKey(testKeys[0]).cached == true, "This image should be already cached.")
-                expectation.fulfill()
+        cache.clearMemoryCache()
+        cache.clearDiskCacheWithCompletionHandler { () -> () in
+            let delayTime = dispatch_time(DISPATCH_TIME_NOW, Int64(0.5 * Double(NSEC_PER_SEC)))
+            dispatch_after(delayTime, dispatch_get_main_queue()) {
+                XCTAssert(self.cache.isImageCachedForKey(testKeys[0]).cached == false, "This image should not be cached yet.")
+                self.cache.storeImage(testImage, originalData: testImageData, forKey: testKeys[0], toDisk: true) { () -> () in
+                    XCTAssert(self.cache.isImageCachedForKey(testKeys[0]).cached == true, "This image should be already cached.")
+                    expectation.fulfill()
+                }
             }
         }
+        
+
         self.waitForExpectationsWithTimeout(5, handler: nil)
     }
     
@@ -187,27 +192,29 @@ class ImageCacheTests: XCTestCase {
     func testCleanDiskCacheNotification() {
         let expectation = expectationWithDescription("wait for retrieving image")
         
-        cache.storeImage(testImage, originalData: testImageData, forKey: testKeys[0], toDisk: true) { () -> () in
-
-            self.observer = NSNotificationCenter.defaultCenter().addObserverForName(KingfisherDidCleanDiskCacheNotification, object: self.cache, queue: NSOperationQueue.mainQueue(), usingBlock: { (noti) -> Void in
-
-                XCTAssert(noti.object === self.cache, "The object of notification should be the cache object.")
+        cache.clearDiskCacheWithCompletionHandler { () -> () in
+            self.cache.storeImage(testImage, originalData: testImageData, forKey: testKeys[0], toDisk: true) { () -> () in
                 
-                guard let hashes = noti.userInfo?[KingfisherDiskCacheCleanedHashKey] as? [String] else {
-                    XCTFail("The clean disk cache notification should contains Strings in key 'KingfisherDiskCacheCleanedHashKey'")
+                self.observer = NSNotificationCenter.defaultCenter().addObserverForName(KingfisherDidCleanDiskCacheNotification, object: self.cache, queue: NSOperationQueue.mainQueue(), usingBlock: { (noti) -> Void in
+                    
+                    XCTAssert(noti.object === self.cache, "The object of notification should be the cache object.")
+                    
+                    guard let hashes = noti.userInfo?[KingfisherDiskCacheCleanedHashKey] as? [String] else {
+                        XCTFail("The clean disk cache notification should contains Strings in key 'KingfisherDiskCacheCleanedHashKey'")
+                        expectation.fulfill()
+                        return
+                    }
+                    
+                    XCTAssertEqual(1, hashes.count, "There should be one and only one file cleaned")
+                    XCTAssertEqual(hashes.first!, self.cache.hashForKey(testKeys[0]), "The cleaned file should be the stored one.")
+                    
+                    NSNotificationCenter.defaultCenter().removeObserver(self.observer)
                     expectation.fulfill()
-                    return
-                }
+                })
                 
-                XCTAssertEqual(1, hashes.count, "There should be one and only one file cleaned")
-                XCTAssertEqual(hashes.first!, self.cache.hashForKey(testKeys[0]), "The cleaned file should be the stored one.")
-                
-                NSNotificationCenter.defaultCenter().removeObserver(self.observer)
-                expectation.fulfill()
-            })
-            
-            self.cache.maxCachePeriodInSecond = 0
-            self.cache.cleanExpiredDiskCache()
+                self.cache.maxCachePeriodInSecond = 0
+                self.cache.cleanExpiredDiskCache()
+            }
         }
         
         waitForExpectationsWithTimeout(5, handler: nil)

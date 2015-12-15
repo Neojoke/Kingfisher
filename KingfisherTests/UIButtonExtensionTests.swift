@@ -90,19 +90,23 @@ class UIButtonExtensionTests: XCTestCase {
         let URL = NSURL(string: URLString)!
         
         var progressBlockIsCalled = false
-        button.kf_setBackgroundImageWithURL(URL, forState: UIControlState.Normal, placeholderImage: nil, optionsInfo: nil, progressBlock: { (receivedSize, totalSize) -> () in
-            progressBlockIsCalled = true
-            }) { (image, error, cacheType, imageURL) -> () in
-                expectation.fulfill()
-                
-                XCTAssert(progressBlockIsCalled, "progressBlock should be called at least once.")
-                XCTAssert(image != nil, "Downloaded image should exist.")
-                XCTAssert(image! == testImage, "Downloaded image should be the same as test image.")
-                XCTAssert(self.button.backgroundImageForState(UIControlState.Normal)! == testImage, "Downloaded image should be already set to the image for state")
-                XCTAssert(self.button.kf_backgroundWebURLForState(UIControlState.Normal) == imageURL, "Web URL should equal to the downloaded url.")
-                XCTAssert(cacheType == .None, "cacheType should be .None since the image was just downloaded.")
-
+        
+        KingfisherManager.sharedManager.cache.clearDiskCacheWithCompletionHandler { () -> () in
+            self.button.kf_setBackgroundImageWithURL(URL, forState: UIControlState.Normal, placeholderImage: nil, optionsInfo: nil, progressBlock: { (receivedSize, totalSize) -> () in
+                progressBlockIsCalled = true
+                }) { (image, error, cacheType, imageURL) -> () in
+                    expectation.fulfill()
+                    
+                    XCTAssert(progressBlockIsCalled, "progressBlock should be called at least once.")
+                    XCTAssert(image != nil, "Downloaded image should exist.")
+                    XCTAssert(image! == testImage, "Downloaded image should be the same as test image.")
+                    XCTAssert(self.button.backgroundImageForState(UIControlState.Normal)! == testImage, "Downloaded image should be already set to the image for state")
+                    XCTAssert(self.button.kf_backgroundWebURLForState(UIControlState.Normal) == imageURL, "Web URL should equal to the downloaded url.")
+                    XCTAssert(cacheType == .None, "cacheType should be .None since the image was just downloaded.")
+                    
+            }
         }
+        
         waitForExpectationsWithTimeout(5, handler: nil)
     }
 }

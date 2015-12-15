@@ -269,27 +269,31 @@ class UIImageViewExtensionTests: XCTestCase {
         stubRequest("GET", URLString).andReturn(200).withBody(testImageData)
         let URL = NSURL(string: URLString)!
         
-        imageView.kf_setImageWithURL(URL, placeholderImage: nil, optionsInfo: [.TargetCache(cache1)], progressBlock: { (receivedSize, totalSize) -> () in
-            
-        }) { (image, error, cacheType, imageURL) -> () in
-            
-            XCTAssertTrue(cache1.isImageCachedForKey(URLString).cached, "This image should be cached in cache1.")
-            XCTAssertFalse(cache2.isImageCachedForKey(URLString).cached, "This image should not be cached in cache2.")
-            XCTAssertFalse(KingfisherManager.sharedManager.cache.isImageCachedForKey(URLString).cached, "This image should not be cached in default cache.")
-            
-            self.imageView.kf_setImageWithURL(URL, placeholderImage: nil, optionsInfo: [.TargetCache(cache2)], progressBlock: { (receivedSize, totalSize) -> () in
-                
-            }, completionHandler: { (image, error, cacheType, imageURL) -> () in
-                
-                XCTAssertTrue(cache1.isImageCachedForKey(URLString).cached, "This image should be cached in cache1.")
-                XCTAssertTrue(cache2.isImageCachedForKey(URLString).cached, "This image should be cached in cache2.")
-                XCTAssertFalse(KingfisherManager.sharedManager.cache.isImageCachedForKey(URLString).cached, "This image should not be cached in default cache.")
-                
-                clearCaches([cache1, cache2])
-                
-                expectation.fulfill()
+        cache1.clearDiskCacheWithCompletionHandler { () -> () in
+            cache2.clearDiskCacheWithCompletionHandler({ () -> () in
+                self.imageView.kf_setImageWithURL(URL, placeholderImage: nil, optionsInfo: [.TargetCache(cache1)], progressBlock: { (receivedSize, totalSize) -> () in
+                    
+                    }) { (image, error, cacheType, imageURL) -> () in
+                        
+                        XCTAssertTrue(cache1.isImageCachedForKey(URLString).cached, "This image should be cached in cache1.")
+                        XCTAssertFalse(cache2.isImageCachedForKey(URLString).cached, "This image should not be cached in cache2.")
+                        XCTAssertFalse(KingfisherManager.sharedManager.cache.isImageCachedForKey(URLString).cached, "This image should not be cached in default cache.")
+                        
+                        self.imageView.kf_setImageWithURL(URL, placeholderImage: nil, optionsInfo: [.TargetCache(cache2)], progressBlock: { (receivedSize, totalSize) -> () in
+                            
+                            }, completionHandler: { (image, error, cacheType, imageURL) -> () in
+                                
+                                XCTAssertTrue(cache1.isImageCachedForKey(URLString).cached, "This image should be cached in cache1.")
+                                XCTAssertTrue(cache2.isImageCachedForKey(URLString).cached, "This image should be cached in cache2.")
+                                XCTAssertFalse(KingfisherManager.sharedManager.cache.isImageCachedForKey(URLString).cached, "This image should not be cached in default cache.")
+                                
+                                clearCaches([cache1, cache2])
+                                
+                                expectation.fulfill()
+                        })
+                        
+                }
             })
-            
         }
         
         waitForExpectationsWithTimeout(5, handler: { (error) -> Void in
