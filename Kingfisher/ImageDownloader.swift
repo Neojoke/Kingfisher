@@ -38,6 +38,7 @@ public typealias RetrieveImageDownloadTask = NSURLSessionDataTask
 private let defaultDownloaderName = "default"
 private let downloaderBarrierName = "com.onevcat.Kingfisher.ImageDownloader.Barrier."
 private let imageProcessQueueName = "com.onevcat.Kingfisher.ImageDownloader.Process."
+
 private let instance = ImageDownloader(name: defaultDownloaderName)
 
 
@@ -87,8 +88,14 @@ public class ImageDownloader: NSObject {
     /// A set of trusted hosts when receiving server trust challenges. A challenge with host name contained in this set will be ignored. You can use this set to specify the self-signed site.
     public var trustedHosts: Set<String>?
     
-    /// Use this to set supply a configuration for the downloader. By default, NSURLSessionConfiguration.ephemeralSessionConfiguration() will be used. You could change the configuration before a downloaing task starts. A configuration without persistent storage for caches is requsted for downloader working correctly.
-    public var sessionConfiguration = NSURLSessionConfiguration.ephemeralSessionConfiguration()
+    /// Use this to set supply a configuration for the downloader. By default, NSURLSessionConfiguration.ephemeralSessionConfiguration() will be used. You could change the configuration before a downloaing task starts.
+    public var sessionConfiguration: NSURLSessionConfiguration {
+        didSet {
+            session = NSURLSession(configuration: sessionConfiguration, delegate: self, delegateQueue: NSOperationQueue.mainQueue())
+        }
+    }
+    
+    private var session: NSURLSession!
     
     /// Delegate of this `ImageDownloader` object. See `ImageDownloaderDelegate` protocol for more.
     public weak var delegate: ImageDownloaderDelegate?
@@ -121,6 +128,11 @@ public class ImageDownloader: NSObject {
         
         barrierQueue = dispatch_queue_create(downloaderBarrierName + name, DISPATCH_QUEUE_CONCURRENT)
         processQueue = dispatch_queue_create(imageProcessQueueName + name, DISPATCH_QUEUE_CONCURRENT)
+        sessionConfiguration = NSURLSessionConfiguration.ephemeralSessionConfiguration()
+        
+        super.init()
+        
+        session = NSURLSession(configuration: sessionConfiguration, delegate: self, delegateQueue: NSOperationQueue.mainQueue())
     }
     
     func fetchLoadForKey(key: NSURL) -> ImageFetchLoad? {
@@ -221,8 +233,7 @@ public extension ImageDownloader {
             self.fetchLoads[URL] = loadObjectForURL!
             
             if create {
-                let session = NSURLSession(configuration: self.sessionConfiguration, delegate: self, delegateQueue:NSOperationQueue.mainQueue())
-                started(session, loadObjectForURL!)
+                started(self.session, loadObjectForURL!)
             }
         })
     }
