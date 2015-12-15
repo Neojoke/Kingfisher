@@ -50,6 +50,12 @@ private let processQueueName = "com.onevcat.Kingfisher.ImageCache.processQueue."
 private let defaultCacheInstance = ImageCache(name: defaultCacheName)
 private let defaultMaxCachePeriodInSecond: NSTimeInterval = 60 * 60 * 24 * 7 //Cache exists for 1 week
 
+func synced(lock: AnyObject, closure: () -> ()) {
+    objc_sync_enter(lock)
+    closure()
+    objc_sync_exit(lock)
+}
+
 /// It represents a task of retrieving image. You can call `cancel` on it to stop the process.
 public typealias RetrieveImageDiskTask = dispatch_block_t
 
@@ -79,6 +85,8 @@ public class ImageCache {
     
     //Disk
     private let ioQueue: dispatch_queue_t
+    private var ioOperating: Bool = false
+    
     private var fileManager: NSFileManager!
     
     ///The disk cache location.
@@ -118,8 +126,15 @@ public class ImageCache {
         let dstPath = path ?? NSSearchPathForDirectoriesInDomains(.CachesDirectory, NSSearchPathDomainMask.UserDomainMask, true).first!
         diskCachePath = (dstPath as NSString).stringByAppendingPathComponent(cacheName)
         
-        ioQueue = dispatch_queue_create(ioQueueName + name, DISPATCH_QUEUE_SERIAL)
-        processQueue = dispatch_queue_create(processQueueName + name, DISPATCH_QUEUE_CONCURRENT)
+        let os = NSProcessInfo().operatingSystemVersion
+        switch (os.majorVersion, os.minorVersion, os.patchVersion) {
+        case (9, 2, _):
+            ioQueue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0)
+            processQueue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0)
+        default:
+            ioQueue = dispatch_queue_create(ioQueueName + name, DISPATCH_QUEUE_SERIAL)
+            processQueue = dispatch_queue_create(processQueueName + name, DISPATCH_QUEUE_CONCURRENT)
+        }
         
         dispatch_sync(ioQueue, { () -> Void in
             self.fileManager = NSFileManager()
@@ -132,6 +147,21 @@ public class ImageCache {
     
     deinit {
         NSNotificationCenter.defaultCenter().removeObserver(self)
+    }
+    
+    func lockIOOperation(lock: Bool) {
+        let os = NSProcessInfo().operatingSystemVersion
+        switch (os.majorVersion, os.minorVersion, os.patchVersion) {
+        case (9, 2, _):
+            if lock {
+                while self.ioOperating {}
+            }
+            synced(self) {
+                self.ioOperating = lock
+            }
+        default:
+            break
+        }
     }
 }
 
@@ -178,6 +208,7 @@ public extension ImageCache {
         
         if toDisk {
             dispatch_async(ioQueue, { () -> Void in
+
                 let imageFormat: ImageFormat
                 if let originalData = originalData {
                     imageFormat = originalData.kf_imageFormat
@@ -194,6 +225,7 @@ public extension ImageCache {
                 }
                 
                 if let data = data {
+                    self.lockIOOperation(true)
                     if !self.fileManager.fileExistsAtPath(self.diskCachePath) {
                         do {
                             try self.fileManager.createDirectoryAtPath(self.diskCachePath, withIntermediateDirectories: true, attributes: nil)
@@ -201,10 +233,10 @@ public extension ImageCache {
                     }
                     
                     self.fileManager.createFileAtPath(self.cachePathForKey(key), contents: data, attributes: nil)
-                    callHandlerInMainQueue()
-                } else {
-                    callHandlerInMainQueue()
+                    self.lockIOOperation(false)
                 }
+                
+                callHandlerInMainQueue()
             })
         } else {
             callHandlerInMainQueue()
@@ -243,7 +275,9 @@ public extension ImageCache {
         if fromDisk {
             dispatch_async(ioQueue, { () -> Void in
                 do {
+                    self.lockIOOperation(true)
                     try self.fileManager.removeItemAtPath(self.cachePathForKey(key))
+                    self.lockIOOperation(false)
                 } catch _ {}
                 callHandlerInMainQueue()
             })
@@ -291,7 +325,9 @@ extension ImageCache {
                 
                 // Begin to load image from disk
                 dispatch_async(sSelf.ioQueue, { () -> Void in
+                    
                     if let image = sSelf.retrieveImageInDiskCacheForKey(key, scale: options.scale) {
+                        
                         if options.shouldDecode {
                             dispatch_async(sSelf.processQueue, { () -> Void in
                                 let result = image.kf_decodedImage(scale: options.scale)
@@ -361,8 +397,20 @@ extension ImageCache {
     /**
     Clear disk cache. This is an async operation.
     */
-    public func clearDiskCache() {
-        clearDiskCacheWithCompletionHandler(nil)
+    public func clearDiskCache(sync: Bool = false) {
+        if sync {
+            clearDiskCacheSync()
+        } else {
+            clearDiskCacheWithCompletionHandler(nil)
+        }
+    }
+    
+    private func clearDiskCacheSync() {
+        do {
+            try self.fileManager.removeItemAtPath(self.diskCachePath)
+            try self.fileManager.createDirectoryAtPath(self.diskCachePath, withIntermediateDirectories: true, attributes: nil)
+        } catch _ {
+        }
     }
     
     /**
@@ -372,13 +420,13 @@ extension ImageCache {
     */
     public func clearDiskCacheWithCompletionHandler(completionHander: (()->())?) {
         dispatch_async(ioQueue, { () -> Void in
+            self.lockIOOperation(true)
             do {
                 try self.fileManager.removeItemAtPath(self.diskCachePath)
-            } catch _ {
-            }
-            do {
                 try self.fileManager.createDirectoryAtPath(self.diskCachePath, withIntermediateDirectories: true, attributes: nil)
+                self.lockIOOperation(false)
             } catch _ {
+                self.lockIOOperation(false)
             }
             
             if let completionHander = completionHander {
@@ -404,6 +452,9 @@ extension ImageCache {
     public func cleanExpiredDiskCacheWithCompletionHander(completionHandler: (()->())?) {
         // Do things in cocurrent io queue
         dispatch_async(ioQueue, { () -> Void in
+
+            self.lockIOOperation(true)
+            
             let diskCacheURL = NSURL(fileURLWithPath: self.diskCachePath)
             let resourceKeys = [NSURLIsDirectoryKey, NSURLContentModificationDateKey, NSURLTotalFileAllocatedSizeKey]
             let expiredDate = NSDate(timeIntervalSinceNow: -self.maxCachePeriodInSecond)
@@ -438,6 +489,9 @@ extension ImageCache {
                             cachedFiles[fileURL] = resourceValues
                         }
                     } catch _ {
+                        self.lockIOOperation(false)
+                        completionHandler?()
+                        return
                     }
                         
                 }
@@ -447,6 +501,9 @@ extension ImageCache {
                 do {
                     try self.fileManager.removeItemAtURL(fileURL)
                 } catch _ {
+                    self.lockIOOperation(false)
+                    completionHandler?()
+                    return
                 }
             }
                 
@@ -470,7 +527,9 @@ extension ImageCache {
                     do {
                         try self.fileManager.removeItemAtURL(fileURL)
                     } catch {
-                        
+                        self.lockIOOperation(false)
+                        completionHandler?()
+                        return
                     }
                         
                     URLsToDelete.append(fileURL)
@@ -484,6 +543,8 @@ extension ImageCache {
                     }
                 }
             }
+            
+            self.lockIOOperation(false)
                 
             dispatch_async(dispatch_get_main_queue(), { () -> Void in
                 
@@ -584,6 +645,7 @@ public extension ImageCache {
             let resourceKeys = [NSURLIsDirectoryKey, NSURLTotalFileAllocatedSizeKey]
             var diskCacheSize: UInt = 0
             
+            self.lockIOOperation(true)
             if let fileEnumerator = self.fileManager.enumeratorAtURL(diskCacheURL, includingPropertiesForKeys: resourceKeys, options: NSDirectoryEnumerationOptions.SkipsHiddenFiles, errorHandler: nil),
                              urls = fileEnumerator.allObjects as? [NSURL] {
                     for fileURL in urls {
@@ -600,10 +662,15 @@ public extension ImageCache {
                                 diskCacheSize += fileSize.unsignedLongValue
                             }
                         } catch _ {
+                            self.lockIOOperation(false)
+                            completionHandler?(size: 0)
+                            return
                         }
                         
                     }
             }
+            
+            self.lockIOOperation(false)
             
             dispatch_async(dispatch_get_main_queue(), { () -> Void in
                 if let completionHandler = completionHandler {

@@ -192,7 +192,6 @@ public class KingfisherManager {
                     // (The image should be in cache. It should be guaranteed by the framework users.)
                     targetCache.retrieveImageForKey(key, options: options, completionHandler: { (cacheImage, cacheType) -> () in
                         completionHandler?(image: cacheImage, error: nil, cacheType: cacheType, imageURL: URL)
-                        
                     })
                     return
                 }
@@ -221,11 +220,11 @@ public class KingfisherManager {
             completionHandler?(image: image, error: error, cacheType: cacheType, imageURL: imageURL)
         }
         let diskTask = targetCache.retrieveImageForKey(key, options: options,
-            completionHandler: { image, cacheType in
+            completionHandler: { [weak self] image, cacheType in
                 if image != nil {
                     diskTaskCompletionHandler(image: image, error: nil, cacheType:cacheType, imageURL: URL)
                 } else {
-                    self.downloadAndCacheImageWithURL(URL,
+                    self?.downloadAndCacheImageWithURL(URL,
                         forKey: key,
                         retrieveImageTask: retrieveImageTask,
                         progressBlock: progressBlock,

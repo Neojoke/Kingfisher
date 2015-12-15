@@ -46,7 +46,7 @@ class ImageCacheTests: XCTestCase {
         // Put teardown code here. This method is called after the invocation of each test method in the class.
         super.tearDown()
         cache.clearMemoryCache()
-        cache.clearDiskCache()
+        cache.clearDiskCache(true)
         cache = nil
         observer = nil
     }
